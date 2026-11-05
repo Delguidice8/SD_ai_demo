@@ -43,6 +43,15 @@ function App() {
         <span className="text-xl font-bold logo-text">SD.ai</span>
       </div>
 
+      {/* Jarvis launcher */}
+      <a
+        href="#jarvis"
+        className="fixed top-6 right-6 z-50 flex items-center gap-2 px-4 py-2 rounded-full border border-cyan-400/50 bg-gray-900/70 backdrop-blur text-cyan-300 text-sm font-semibold hover:bg-cyan-400/10 hover:glow transition-all"
+      >
+        <Bot className="w-4 h-4" />
+        Launch Jarvis
+      </a>
+
       {/* Hero Section */}
       <section className="relative h-screen flex items-center mouse-glow">
         <div className="absolute inset-0 z-0">
