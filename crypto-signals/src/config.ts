@@ -26,47 +26,26 @@ export const brand = {
  */
 export const SAMPLE_DATA = true;
 
-export type Indicator = {
-  name: string;
-  short: string;
-  description: string;
-  timeframes: string[];
-  tags: string[];
-};
+/* ── PLANS ───────────────────────────────────────────────────
+ * Plans are listed from cheapest to most expensive. Each plan
+ * unlocks every indicator assigned to it PLUS everything from
+ * the plans before it. The last plan unlocks everything.
+ */
 
-export const indicators: Indicator[] = [
-  {
-    name: 'Trend Vector',
-    short: 'TV',
-    description:
-      'Trend-following overlay that flips colour when momentum and structure agree. Built to keep you in strong moves and out of the chop.',
-    timeframes: ['1H', '4H', '1D'],
-    tags: ['Trend', 'Overlay'],
-  },
-  {
-    name: 'Reversal Radar',
-    short: 'RR',
-    description:
-      'Spots exhaustion using divergence plus volume climax, and prints a buy or sell marker only when both line up.',
-    timeframes: ['15m', '1H', '4H'],
-    tags: ['Reversal', 'Oscillator'],
-  },
-  {
-    name: 'Liquidity Zones',
-    short: 'LZ',
-    description:
-      'Automatically maps the high-volume support and resistance levels where price is most likely to react.',
-    timeframes: ['1H', '4H', '1D', '1W'],
-    tags: ['Levels', 'Volume'],
-  },
-];
+export type TierId = 'basic' | 'pro' | 'all';
 
 export type Tier = {
+  id: TierId;
   name: string;
   monthly: number;
   yearly: number; // price per year
   blurb: string;
-  features: string[];
+  /** Extra perks besides the indicators (alerts, support, calls…). */
+  perks: string[];
+  /** Optional "was" price shown crossed out — use for the special deal. */
+  compareAt?: { monthly: number; yearly: number };
+  /** Badge on top of the card, e.g. "Best deal". */
+  badge?: string;
   highlighted?: boolean;
   /** Stripe Payment Link (or any checkout URL). Leave empty → button opens the waitlist. */
   checkoutMonthly: string;
@@ -75,48 +54,123 @@ export type Tier = {
 
 export const tiers: Tier[] = [
   {
-    name: 'Starter',
+    id: 'basic',
+    name: 'Basic',
     monthly: 29,
     yearly: 290,
-    blurb: 'One indicator to sharpen your entries.',
-    features: [
-      'Access to 1 indicator of your choice',
-      'TradingView invite-only script',
-      'Daily market recap',
-      'Community chat access',
-    ],
+    blurb: 'The core indicators to read the trend and key levels.',
+    perks: ['TradingView invite-only access', 'Daily market recap', 'Community chat'],
     checkoutMonthly: '',
     checkoutYearly: '',
   },
   {
+    id: 'pro',
     name: 'Pro',
     monthly: 59,
     yearly: 590,
-    blurb: 'The full toolkit plus real-time alerts.',
-    features: [
-      'All indicators, including future releases',
+    blurb: 'Adds timing tools and real-time alerts.',
+    perks: [
+      'Everything in Basic',
       'Real-time signal alerts (Discord + Telegram)',
       'Entry, stop-loss & take-profit levels',
       'Weekly strategy breakdown',
-      'Priority support',
     ],
-    highlighted: true,
     checkoutMonthly: '',
     checkoutYearly: '',
   },
   {
-    name: 'Elite',
-    monthly: 129,
-    yearly: 1290,
-    blurb: 'For active traders who want an edge on setup.',
-    features: [
+    id: 'all',
+    name: 'All Access',
+    monthly: 99,
+    yearly: 990,
+    compareAt: { monthly: 149, yearly: 1490 },
+    badge: 'Best deal · Everything unlocked',
+    highlighted: true,
+    blurb: 'Every indicator and strategy, plus everything we release next.',
+    perks: [
       'Everything in Pro',
+      'All future indicators included',
+      'Private All Access channel',
       'Monthly 1-on-1 setup call',
-      'Early access to beta indicators',
-      'Private Elite channel',
+      'Priority support',
     ],
     checkoutMonthly: '',
     checkoutYearly: '',
+  },
+];
+
+/** Position of a plan in the list. Higher = more expensive. */
+export const tierRank = (id: TierId) => tiers.findIndex((t) => t.id === id);
+export const tierName = (id: TierId) => tiers.find((t) => t.id === id)?.name ?? id;
+
+/* ── INDICATORS / STRATEGIES ─────────────────────────────────
+ * Set `tier` to the CHEAPEST plan that unlocks it.
+ * These are placeholders — swap in your real indicators.
+ */
+
+export type Indicator = {
+  name: string;
+  short: string;
+  description: string;
+  timeframes: string[];
+  tags: string[];
+  tier: TierId;
+};
+
+export const indicators: Indicator[] = [
+  {
+    name: 'Trend Vector',
+    short: 'TV',
+    tier: 'basic',
+    description:
+      'Trend-following overlay that flips colour when momentum and structure agree. Built to keep you in strong moves and out of the chop.',
+    timeframes: ['1H', '4H', '1D'],
+    tags: ['Trend', 'Overlay'],
+  },
+  {
+    name: 'Liquidity Zones',
+    short: 'LZ',
+    tier: 'basic',
+    description:
+      'Automatically maps the high-volume support and resistance levels where price is most likely to react.',
+    timeframes: ['1H', '4H', '1D', '1W'],
+    tags: ['Levels', 'Volume'],
+  },
+  {
+    name: 'Reversal Radar',
+    short: 'RR',
+    tier: 'pro',
+    description:
+      'Spots exhaustion using divergence plus volume climax, and prints a buy or sell marker only when both line up.',
+    timeframes: ['15m', '1H', '4H'],
+    tags: ['Reversal', 'Oscillator'],
+  },
+  {
+    name: 'Momentum Pulse',
+    short: 'MP',
+    tier: 'pro',
+    description:
+      'Measures the strength behind a move so you can tell a real breakout from a fake-out before you enter.',
+    timeframes: ['15m', '1H', '4H'],
+    tags: ['Momentum', 'Breakouts'],
+  },
+  {
+    name: 'Whale Flow',
+    short: 'WF',
+    tier: 'all',
+    description:
+      'Flags unusual volume spikes and large-order footprints that often show up before big moves.',
+    timeframes: ['5m', '15m', '1H'],
+    tags: ['Volume', 'Order flow'],
+  },
+  {
+    name: 'Cycle Compass',
+    short: 'CC',
+    tier: 'all',
+    description:
+      'A higher-timeframe market regime model that tells you whether to favour longs, shorts or sitting out.',
+    timeframes: ['1D', '1W'],
+    tags: ['Macro', 'Strategy'],
   },
 ];
 
@@ -159,6 +213,10 @@ export const faqs: { q: string; a: string }[] = [
   {
     q: 'Which exchanges and coins does this work on?',
     a: 'The indicators work on any chart TradingView supports. Our alerts focus on major pairs like BTC, ETH, SOL and other high-liquidity assets.',
+  },
+  {
+    q: 'Can I upgrade my plan later?',
+    a: 'Yes. Upgrade anytime and the extra indicators are unlocked on your TradingView account, usually within a few hours.',
   },
   {
     q: 'Can I cancel anytime?',
