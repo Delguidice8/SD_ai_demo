@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body { background: #07090d; font-family: Inter, system-ui, sans-serif; }
+  ::selection { background: #c6f432; color: #07090d; }
+}
+
+@layer components {
+  .container-x { @apply mx-auto w-full max-w-6xl px-4 sm:px-6; }
+  .eyebrow { @apply font-mono text-xs uppercase tracking-[0.2em] text-lime-signal; }
+  .h-section { @apply font-display text-3xl font-semibold tracking-tight sm:text-5xl; }
+  .panel { @apply rounded-2xl border border-white/[0.07] bg-ink-900/80; }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-lime-signal px-6 py-3 font-semibold text-ink
+      transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-signal focus-visible:ring-offset-2 focus-visible:ring-offset-ink;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-6 py-3 font-semibold text-white
+      transition hover:border-white/40 hover:bg-white/5;
+  }
+  .sample-badge {
+    @apply inline-flex items-center gap-1 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-300;
+  }
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse at 50% 30%, black 30%, transparent 75%);
+}
+.chart-line { stroke-dasharray: 2000; stroke-dashoffset: 2000; }
+@media (prefers-reduced-motion: reduce) {
+  .chart-line { stroke-dasharray: none; stroke-dashoffset: 0; animation: none !important; }
+  .animate-marquee, .animate-pop { animation: none !important; }
+}
