@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, BellRing, Minus, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { SymbolBadge } from './ui';
-import { feed, formatPrice, formatVolume, generateHistory, symbolInfo, timeframe } from '../market';
+import { feed, formatPrice, formatVolume, symbolInfo, timeframe } from '../market';
+import type { Bar, Quote } from '../market';
+import { loadHistory } from '../data/providers';
 import type { Account, PriceAlert } from '../trading';
 import { STARTING_CASH, equity, unrealized } from '../trading';
 
@@ -62,7 +64,10 @@ export function Watchlist({
               <div className="flex min-w-0 items-center gap-2.5">
                 <SymbolBadge ticker={t} />
                 <div className="min-w-0">
-                  <div className="truncate text-[13px] font-semibold text-t-text">{t}</div>
+                  <div className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-t-text">
+                    {t}
+                    <SourceDot q={q} />
+                  </div>
                   <div className="truncate text-[11px] text-t-faint">{info.name}</div>
                 </div>
               </div>
@@ -91,6 +96,12 @@ export function Watchlist({
   );
 }
 
+function SourceDot({ q }: { q: Quote }) {
+  if (q.source === 'sim') return <span title="Simulated price (no data source)" className="rounded bg-t-hover px-1 text-[9px] font-semibold tracking-wide text-t-faint">SIM</span>;
+  if (q.streaming) return <span title={`Real-time · ${q.source === 'coinbase' ? 'Coinbase' : 'Finnhub'}`} className="h-1.5 w-1.5 rounded-full bg-t-up" />;
+  return <span title="Delayed · Twelve Data (polled)" className="h-1.5 w-1.5 rounded-full bg-t-accent" />;
+}
+
 // ---------------------------------------------------------------- Details
 export function SymbolDetails({ ticker }: { ticker: string }) {
   const info = symbolInfo(ticker);
@@ -98,27 +109,46 @@ export function SymbolDetails({ ticker }: { ticker: string }) {
   const ch = q.price - q.prevClose;
   const chPct = (ch / q.prevClose) * 100;
 
+  const [daily, setDaily] = useState<{ ticker: string; bars: Bar[]; real: boolean } | null>(null);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    loadHistory(ticker, timeframe('D'), ctrl.signal)
+      .then((r) => !ctrl.signal.aborted && setDaily({ ticker, bars: r.bars, real: r.source !== 'sim' }))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [ticker]);
+
   const perf = useMemo(() => {
-    const now = Date.now();
-    const daily = generateHistory(info, timeframe('D'), feed.quote(ticker).price, now, 400);
-    const last = daily[daily.length - 1].c;
-    const back = (n: number) => daily[Math.max(0, daily.length - 1 - n)].c;
-    const jan1 = new Date(new Date().getFullYear(), 0, 1).getTime();
-    const ytdBar = daily.find((b) => b.t >= jan1) ?? daily[0];
-    const yr = daily.slice(-365);
+    if (!daily || daily.ticker !== ticker || daily.bars.length < 2) return null;
+    const bars = daily.bars;
+    const last = bars[bars.length - 1];
+    // look back by calendar time: stock data has no weekend bars
+    const back = (days: number) => {
+      const target = last.t - days * 86_400_000;
+      let b = bars[0];
+      for (const x of bars) {
+        if (x.t > target) break;
+        b = x;
+      }
+      return b.c;
+    };
+    const jan1 = Date.UTC(new Date().getUTCFullYear(), 0, 1);
+    const ytdBar = bars.find((b) => b.t >= jan1) ?? bars[0];
+    const yr = bars.filter((b) => b.t >= last.t - 365 * 86_400_000);
     return {
+      real: daily.real,
       rows: [
         ['1W', back(7)],
         ['1M', back(30)],
-        ['3M', back(90)],
+        ['3M', back(91)],
         ['6M', back(182)],
         ['YTD', ytdBar.o],
         ['1Y', back(365)],
-      ].map(([l, p]) => [l as string, ((last - (p as number)) / (p as number)) * 100] as const),
-      hi52: Math.max(...yr.map((b) => b.h)),
-      lo52: Math.min(...yr.map((b) => b.l)),
+      ].map(([l, p]) => [l as string, ((q.price - (p as number)) / (p as number)) * 100] as const),
+      hi52: Math.max(q.price, ...yr.map((b) => b.h)),
+      lo52: Math.min(q.price, ...yr.map((b) => b.l)),
     };
-  }, [ticker]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [daily, ticker, q.price]);
 
   const rangePos = Math.max(0, Math.min(1, (q.price - q.dayLow) / (q.dayHigh - q.dayLow || 1)));
   const fmt = (v: number) => formatPrice(v, info.decimals);
@@ -145,7 +175,12 @@ export function SymbolDetails({ ticker }: { ticker: string }) {
         </span>
       </div>
       <div className="mt-1 flex items-center gap-1.5 text-[11px] text-t-faint">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-t-up" /> Live · simulated feed
+        <SourceDot q={q} />
+        {q.source === 'sim'
+          ? 'Simulated price · add API keys under Data sources'
+          : `${q.streaming ? 'Real-time' : 'Delayed'} · ${q.source === 'coinbase' ? 'Coinbase' : q.source === 'finnhub' ? 'Finnhub' : 'Twelve Data'}${
+              q.marketOpen === false ? ' · market closed' : ''
+            } · updated ${new Date(q.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
       </div>
 
       <div className="mt-4">
@@ -166,8 +201,8 @@ export function SymbolDetails({ ticker }: { ticker: string }) {
         {[
           ['Prev close', fmt(q.prevClose)],
           ['Volume', formatVolume(q.dayVolume)],
-          ['52W high', fmt(perf.hi52)],
-          ['52W low', fmt(perf.lo52)],
+          ['52W high', perf ? fmt(perf.hi52) : '…'],
+          ['52W low', perf ? fmt(perf.lo52) : '…'],
         ].map(([k, v]) => (
           <div key={k} className="flex justify-between gap-2">
             <dt className="text-t-faint">{k}</dt>
@@ -176,8 +211,9 @@ export function SymbolDetails({ ticker }: { ticker: string }) {
         ))}
       </dl>
 
-      <div className="mt-4 grid grid-cols-3 gap-1.5">
-        {perf.rows.map(([l, v]) => (
+      {perf && !perf.real && <p className="mt-3 text-[11px] text-t-faint">Performance below uses simulated history.</p>}
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
+        {(perf?.rows ?? []).map(([l, v]) => (
           <div key={l} className={`rounded-md px-2 py-1.5 text-center ${v >= 0 ? 'bg-t-up/10' : 'bg-t-down/10'}`}>
             <div className={`text-[12px] font-semibold tnum ${v >= 0 ? 'text-t-up' : 'text-t-down'}`}>{pct(v)}</div>
             <div className="text-[10px] font-medium text-t-faint">{l}</div>

@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Search } from 'lucide-react';
 import { Modal, SymbolBadge } from './ui';
 import { SYMBOLS, feed, formatPrice } from '../market';
 import type { AssetClass } from '../market';
 import { INDICATORS } from '../indicators';
 import type { IndicatorConfig, IndicatorType } from '../indicators';
+import { getKeys, providerStatus, setKeys } from '../data/providers';
+import type { ApiKeys, ProviderId, ProviderState } from '../data/providers';
 
-const CLASSES: ('All' | AssetClass)[] = ['All', 'Stocks', 'Crypto', 'Forex', 'Indices', 'Futures'];
+const CLASSES: ('All' | AssetClass)[] = ['All', 'Stocks', 'ETFs', 'Crypto', 'Forex', 'Commodities'];
 
 export function SymbolSearch({ initial = '', title = 'Symbol Search', onPick, onClose }: { initial?: string; title?: string; onPick: (t: string) => void; onClose: () => void }) {
   const [q, setQ] = useState(initial);
@@ -195,6 +197,115 @@ export function IndicatorSettings({ cfg, onSave, onClose }: { cfg: IndicatorConf
           className="rounded-md bg-t-accent px-4 py-2 text-[13px] font-semibold text-black hover:brightness-110"
         >
           Apply
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+const PROVIDERS: { id: ProviderId; name: string; covers: string; key?: 'finnhub' | 'twelvedata'; signup?: string; help: string }[] = [
+  { id: 'coinbase', name: 'Coinbase Exchange', covers: 'Crypto: BTC, ETH, SOL', help: 'Real-time prices and full candle history. No key needed.' },
+  {
+    id: 'finnhub',
+    name: 'Finnhub',
+    covers: 'Stocks, ETFs, forex, gold, oil',
+    key: 'finnhub',
+    signup: 'https://finnhub.io/register',
+    help: 'Real-time streaming prices and daily quotes. Free key, 60 calls per minute.',
+  },
+  {
+    id: 'twelvedata',
+    name: 'Twelve Data',
+    covers: 'Stocks, ETFs, forex, gold, oil',
+    key: 'twelvedata',
+    signup: 'https://twelvedata.com/pricing',
+    help: 'Real candle history on every timeframe, plus delayed quotes when Finnhub is not set. Free plan: 8 requests per minute, 800 per day.',
+  },
+];
+
+const STATE_STYLE: Record<ProviderState, { label: string; cls: string }> = {
+  off: { label: 'Off', cls: 'bg-t-hover text-t-faint' },
+  connecting: { label: 'Connecting', cls: 'bg-t-accent/15 text-t-accent' },
+  live: { label: 'Live', cls: 'bg-t-up/15 text-t-up' },
+  ok: { label: 'Connected', cls: 'bg-t-up/15 text-t-up' },
+  limited: { label: 'Rate limited', cls: 'bg-t-accent/15 text-t-accent' },
+  error: { label: 'Error', cls: 'bg-t-down/15 text-t-down' },
+};
+
+export function DataSources({ onClose }: { onClose: () => void }) {
+  useSyncExternalStore(providerStatus.subscribe, providerStatus.version);
+  const status = providerStatus.get();
+  const [keys, setLocalKeys] = useState<ApiKeys>(getKeys);
+  const [saved, setSaved] = useState(false);
+  const dirty = JSON.stringify(keys) !== JSON.stringify(getKeys());
+
+  return (
+    <Modal title="Data sources" onClose={onClose} width="max-w-lg">
+      <div className="t-scroll space-y-3 overflow-y-auto px-5 py-4">
+        <p className="text-[13px] text-t-muted">
+          Crypto prices are live out of the box. For live stocks, ETFs, forex and commodities, add free API keys. Keys stay in this browser and are sent only to the provider.
+        </p>
+        {PROVIDERS.map((p) => {
+          const st = STATE_STYLE[status[p.id].state];
+          return (
+            <section key={p.id} className="rounded-xl border border-t-border p-3.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-[14px] font-semibold text-t-text">{p.name}</h3>
+                  <p className="text-[12px] text-t-muted">{p.covers}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
+              </div>
+              <p className="mt-2 text-[12px] text-t-faint">{p.help}</p>
+              {status[p.id].state !== 'off' && <p className="mt-1 text-[12px] text-t-muted">{status[p.id].detail}</p>}
+              {p.key && (
+                <div className="mt-3">
+                  <label htmlFor={`key-${p.id}`} className="text-[11px] font-medium text-t-faint">
+                    API key
+                  </label>
+                  <div className="mt-1 flex gap-2">
+                    <input
+                      id={`key-${p.id}`}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={keys[p.key]}
+                      placeholder="Paste your key"
+                      onChange={(e) => {
+                        setSaved(false);
+                        setLocalKeys({ ...keys, [p.key!]: e.target.value });
+                      }}
+                      className="h-9 min-w-0 flex-1 rounded-lg border border-t-border bg-t-bg px-3 font-mono text-[12px] text-t-text outline-none focus:border-t-accent"
+                    />
+                    <a
+                      href={p.signup}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex shrink-0 items-center rounded-lg border border-t-border px-3 text-[12px] font-medium text-t-muted hover:border-t-faint hover:text-t-text"
+                    >
+                      Get a free key
+                    </a>
+                  </div>
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t border-t-border px-5 py-3">
+        {saved && <span className="mr-auto text-[12px] text-t-up">Saved. Reconnecting…</span>}
+        <button onClick={onClose} className="rounded-md px-4 py-2 text-[13px] text-t-muted hover:bg-t-hover hover:text-t-text">
+          Close
+        </button>
+        <button
+          disabled={!dirty}
+          onClick={() => {
+            setKeys(keys);
+            setSaved(true);
+          }}
+          className="rounded-md bg-t-accent px-4 py-2 text-[13px] font-semibold text-black hover:brightness-110 disabled:opacity-40"
+        >
+          Save keys
         </button>
       </div>
     </Modal>

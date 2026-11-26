@@ -37,6 +37,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Layers,
+  Database,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ChartView } from './ChartView';
@@ -44,9 +45,10 @@ import type { ChartHandle } from './ChartView';
 import type { ChartType, Drawing, PriceLine, Tool } from './chart/engine';
 import { createIndicator } from './indicators';
 import type { IndicatorConfig, IndicatorType } from './indicators';
-import { TIMEFRAMES, feed, formatPrice, symbolInfo } from './market';
+import { RENAMED, TIMEFRAMES, feed, formatPrice, isKnownSymbol, symbolInfo } from './market';
+import { providerStatus, setActiveSymbol, startProviders, stopProviders } from './data/providers';
 import { AlertsPanel, SymbolDetails, TradePanel, Watchlist } from './components/Panels';
-import { IndicatorPicker, IndicatorSettings, SymbolSearch } from './components/Modals';
+import { DataSources, IndicatorPicker, IndicatorSettings, SymbolSearch } from './components/Modals';
 import { IconButton, Modal } from './components/ui';
 import { load, save } from './storage';
 import type { ThemeMode } from './theme';
@@ -88,6 +90,10 @@ const RANGES: { label: string; tf: string; from: () => number }[] = [
 
 const DEFAULT_INDICATORS = () => [createIndicator('EMA', { length: 21 }, ['#f0b44c']), createIndicator('SMA', { length: 50 }, ['#5ab0ff']), createIndicator('RSI')];
 
+const migrate = (t: string) => RENAMED[t] ?? t;
+const migrateList = (l: string[]) => [...new Set(l.map(migrate).filter(isKnownSymbol))];
+const migrateKeys = <T,>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [migrate(k), v]));
+
 interface Toast {
   id: string;
   title: string;
@@ -128,16 +134,22 @@ function useIsWide() {
 export default function Terminal() {
   useSyncExternalStore(feed.subscribe, feed.getVersion);
 
-  const [symbol, setSymbol] = useState(() => load('symbol', 'BTCUSD'));
+  const [symbol, setSymbol] = useState(() => {
+    const t = migrate(load('symbol', 'BTCUSD'));
+    return isKnownSymbol(t) ? t : 'BTCUSD';
+  });
   const [tf, setTf] = useState(() => load('tf', '60'));
   const [chartType, setChartType] = useState<ChartType>(() => load('chartType', 'candles'));
   const [indicators, setIndicators] = useState<IndicatorConfig[]>(() => load('indicators', DEFAULT_INDICATORS()));
-  const [drawings, setDrawings] = useState<Record<string, Drawing[]>>(() => load('drawings', {}));
-  const [watchlist, setWatchlist] = useState<string[]>(() => load('watchlist', ['BTCUSD', 'ETHUSD', 'SOLUSD', 'AAPL', 'NVDA', 'TSLA', 'MSFT', 'SPX', 'EURUSD', 'GC1!']));
+  const [drawings, setDrawings] = useState<Record<string, Drawing[]>>(() => migrateKeys(load('drawings', {})));
+  const [watchlist, setWatchlist] = useState<string[]>(() => migrateList(load('watchlist', ['BTCUSD', 'ETHUSD', 'SOLUSD', 'AAPL', 'NVDA', 'TSLA', 'MSFT', 'SPY', 'EURUSD', 'XAUUSD'])));
   const [theme, setTheme] = useState<ThemeMode>(() => load('theme', 'dark'));
   const [showVolume, setShowVolume] = useState(() => load('showVolume', true));
   const [logScale, setLogScale] = useState(() => load('logScale', false));
-  const [account, setAccount] = useState<Account>(() => load('account', newAccount()));
+  const [account, setAccount] = useState<Account>(() => {
+    const a = load('account', newAccount());
+    return { ...a, positions: migrateKeys(a.positions) };
+  });
   const [alerts, setAlerts] = useState<PriceAlert[]>(() => load('alerts', []));
 
   const [autoScale, setAutoScale] = useState(true);
@@ -173,8 +185,18 @@ export default function Terminal() {
 
   useEffect(() => {
     feed.start();
-    return () => feed.stop();
+    startProviders();
+    return () => {
+      feed.stop();
+      stopProviders();
+    };
   }, []);
+  useEffect(() => setActiveSymbol(symbol), [symbol]);
+  useSyncExternalStore(providerStatus.subscribe, providerStatus.version);
+  const pStatus = providerStatus.get();
+  const anyKeyless = pStatus.finnhub.state === 'off' && pStatus.twelvedata.state === 'off';
+  const anyError = Object.values(pStatus).some((p) => p.state === 'error');
+  const [dataOpen, setDataOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle('t-light', theme === 'light');
@@ -426,6 +448,21 @@ export default function Terminal() {
               {dayPct.toFixed(2)}%
             </span>
           </div>
+          <button
+            onClick={() => setDataOpen(true)}
+            title="Data sources"
+            className="flex h-9 items-center gap-1.5 rounded-md px-2 text-[13px] font-medium text-t-muted hover:bg-t-hover hover:text-t-text"
+          >
+            <span className="relative">
+              <Database size={16} />
+              <span
+                className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2 ring-[rgb(var(--t-panel))] ${
+                  anyError ? 'bg-t-down' : anyKeyless ? 'bg-t-accent' : 'bg-t-up'
+                }`}
+              />
+            </span>
+            <span className="hidden xl:inline">Data</span>
+          </button>
           <IconButton title="Take snapshot" onClick={snapshot} className="hidden sm:flex">
             <Camera size={17} />
           </IconButton>
@@ -638,6 +675,7 @@ export default function Terminal() {
           }}
         />
       )}
+      {dataOpen && <DataSources onClose={() => setDataOpen(false)} />}
       {pickIndicator && <IndicatorPicker onPick={addIndicator} onClose={() => setPickIndicator(false)} />}
       {editing && (
         <IndicatorSettings

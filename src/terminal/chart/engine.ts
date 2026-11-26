@@ -243,8 +243,7 @@ export class ChartEngine {
 
   fitFrom(fromTime: number) {
     if (!this.bars.length) return;
-    const t0 = this.bars[0].t;
-    const startIdx = Math.max(0, Math.floor((fromTime - t0) / this.tfMs));
+    const startIdx = Math.max(0, Math.floor(this.timeToIdx(fromTime)));
     const n = this.bars.length - startIdx;
     const plotW = this.w - PRICE_AXIS_W;
     this.spacing = Math.max(0.5, Math.min(60, plotW / (n + 4)));
@@ -290,13 +289,32 @@ export class ChartEngine {
   private xToIdx(x: number) {
     return this.rightIndex + 0.5 - (this.plotW - x) / this.spacing;
   }
+  // Bars may have gaps (market closed), so time <-> index goes through the
+  // bar array; beyond either end we extrapolate at one bar per timeframe.
   private timeToIdx(t: number) {
-    if (!this.bars.length) return 0;
-    return (t - this.bars[0].t) / this.tfMs;
+    const bars = this.bars;
+    const n = bars.length;
+    if (!n) return 0;
+    if (t <= bars[0].t) return (t - bars[0].t) / this.tfMs;
+    if (t >= bars[n - 1].t) return n - 1 + (t - bars[n - 1].t) / this.tfMs;
+    let lo = 0;
+    let hi = n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (bars[mid].t <= t) lo = mid;
+      else hi = mid;
+    }
+    const span = bars[hi].t - bars[lo].t;
+    return lo + (span > 0 ? Math.min(1, (t - bars[lo].t) / Math.min(span, this.tfMs)) : 0);
   }
   private idxToTime(i: number) {
-    if (!this.bars.length) return 0;
-    return this.bars[0].t + i * this.tfMs;
+    const bars = this.bars;
+    const n = bars.length;
+    if (!n) return 0;
+    if (i <= 0) return bars[0].t + i * this.tfMs;
+    if (i >= n - 1) return bars[n - 1].t + (i - (n - 1)) * this.tfMs;
+    const lo = Math.floor(i);
+    return bars[lo].t + (i - lo) * Math.min(this.tfMs, bars[lo + 1].t - bars[lo].t);
   }
   private f(p: number) {
     return this.opts.logScale ? Math.log(Math.max(p, 1e-12)) : p;
@@ -1077,8 +1095,8 @@ export class ChartEngine {
     const color = lastRaw.c >= lastRaw.o ? th.up : th.down;
     const ly = this.priceToY(lastRaw.c);
     if (ly > main.top && ly < main.top + main.h) {
-      const remaining = Math.max(0, lastRaw.t + this.tfMs - Date.now());
-      const cd = this.formatCountdown(remaining);
+      const remaining = lastRaw.t + this.tfMs - Date.now();
+      const cd = remaining > 0 ? this.formatCountdown(remaining) : '';
       ctx.fillStyle = color;
       ctx.fillRect(this.plotW + 1, ly - 10, PRICE_AXIS_W - 1, 34);
       ctx.fillStyle = '#fff';
@@ -1459,7 +1477,7 @@ export class ChartEngine {
         const dIdx = Math.round(this.xToIdx(x) - inter.startIdx);
         const dP = this.yToPrice(y) - inter.startPrice;
         this.opts.drawings = this.opts.drawings.map((d) =>
-          d.id !== inter.id ? d : { ...d, pts: inter.orig.map((p) => ({ t: p.t + dIdx * this.tfMs, p: p.p + dP })) },
+          d.id !== inter.id ? d : { ...d, pts: inter.orig.map((p) => ({ t: this.idxToTime(Math.round(this.timeToIdx(p.t)) + dIdx), p: p.p + dP })) },
         );
         this.select(inter.id);
         this.requestRender();

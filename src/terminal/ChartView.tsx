@@ -4,7 +4,9 @@ import { ChartEngine } from './chart/engine';
 import type { ChartType, Drawing, PaneLayout, PriceLine, Tool } from './chart/engine';
 import { INDICATORS, indicatorLabel } from './indicators';
 import type { IndicatorConfig } from './indicators';
-import { applyTick, feed, formatPrice, formatVolume, generateHistory, heikinAshi, symbolInfo, timeframe } from './market';
+import { applyTick, feed, formatPrice, formatVolume, heikinAshi, symbolInfo, timeframe } from './market';
+import type { QuoteSource } from './market';
+import { loadHistory } from './data/providers';
 import type { Bar } from './market';
 import { CHART_THEMES } from './theme';
 import type { ThemeMode } from './theme';
@@ -51,6 +53,10 @@ export const ChartView = forwardRef<ChartHandle, Props>(function ChartView(props
   const [hover, setHover] = useState<number | null>(null);
   const [panes, setPanes] = useState<PaneLayout[]>([]);
   const [selected, setSelected] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [history, setHistory] = useState<{ source: QuoteSource; note?: string }>({ source: 'sim' });
+  const loadedKey = useRef('');
+  const tickState = useRef({ time: 0, cum: 0 });
 
   const info = symbolInfo(props.symbol);
   const tf = timeframe(props.tf);
@@ -106,18 +112,37 @@ export const ChartView = forwardRef<ChartHandle, Props>(function ChartView(props
 
   // load history when symbol / timeframe changes
   useEffect(() => {
-    const q = feed.quote(props.symbol);
-    rawRef.current = generateHistory(info, tf, q.price, Date.now());
+    const key = props.symbol + '|' + props.tf;
+    const ctrl = new AbortController();
+    setLoading(true);
     setSelected(null);
-    setVersion((v) => v + 1);
+    loadHistory(props.symbol, tf, ctrl.signal)
+      .then((res) => {
+        if (ctrl.signal.aborted) return;
+        rawRef.current = res.bars;
+        loadedKey.current = key;
+        const q = feed.quote(props.symbol);
+        tickState.current = { time: res.source === 'sim' ? 0 : res.bars[res.bars.length - 1].t, cum: q.cumVolume };
+        setHistory({ source: res.source, note: res.note });
+        setLoading(false);
+        setVersion((v) => v + 1);
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
   }, [props.symbol, props.tf]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // live ticks
+  // live ticks: apply only genuinely new prices, using the trade's own time
   useEffect(() => {
+    const key = props.symbol + '|' + props.tf;
     return feed.subscribe(() => {
+      if (loadedKey.current !== key || !rawRef.current.length) return;
       const q = feed.quote(props.symbol);
-      const inc = (info.volume / 86400) * (0.3 + Math.random() * 1.4);
-      applyTick(rawRef.current, tf, q.price, Date.now(), inc);
+      const st = tickState.current;
+      if (q.time <= st.time) return;
+      const inc = Math.max(0, q.cumVolume - st.cum);
+      st.time = q.time;
+      st.cum = q.cumVolume;
+      applyTick(rawRef.current, tf, q.price, q.time, inc);
       setVersion((v) => v + 1);
     });
   }, [props.symbol, props.tf]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -141,7 +166,8 @@ export const ChartView = forwardRef<ChartHandle, Props>(function ChartView(props
   // push data — reset the view whenever the symbol or timeframe changes
   const lastKey = useRef('');
   useEffect(() => {
-    const key = props.symbol + '|' + props.tf;
+    const key = loadedKey.current;
+    if (!key) return;
     const reset = key !== lastKey.current;
     lastKey.current = key;
     engineRef.current?.setOptions({ indicators: computed });
@@ -251,6 +277,7 @@ export const ChartView = forwardRef<ChartHandle, Props>(function ChartView(props
               <span className="text-t-faint font-normal">·</span>
               <span className="font-medium text-t-muted hidden sm:inline">{info.exchange}</span>
             </button>
+            <SourcePill quote={feed.quote(props.symbol).source} history={history.source} note={history.note} />
             <div className="flex flex-wrap gap-x-2.5 text-[12px] tnum">
               <span className="text-t-muted">O<span className={`ml-1 ${valColor}`}>{fmt(bar.o)}</span></span>
               <span className="text-t-muted">H<span className={`ml-1 ${valColor}`}>{fmt(bar.h)}</span></span>
@@ -265,6 +292,15 @@ export const ChartView = forwardRef<ChartHandle, Props>(function ChartView(props
             </div>
           </div>
           {overlays.map((c) => indicatorRow(c))}
+        </div>
+      )}
+
+      {loading && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="flex items-center gap-2.5 rounded-full border border-t-border bg-t-elev/95 px-4 py-2 text-[12px] text-t-muted shadow-lg">
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-t-faint border-t-transparent" style={{ borderTopColor: 'transparent' }} />
+            Loading {props.symbol} {tf.label}…
+          </div>
         </div>
       )}
 
@@ -297,3 +333,30 @@ export const ChartView = forwardRef<ChartHandle, Props>(function ChartView(props
     </div>
   );
 });
+
+const SOURCE_LABEL: Record<QuoteSource, string> = {
+  coinbase: 'Coinbase',
+  finnhub: 'Finnhub',
+  twelvedata: 'Twelve Data',
+  sim: 'Simulated',
+};
+
+function SourcePill({ quote, history, note }: { quote: QuoteSource; history: QuoteSource; note?: string }) {
+  const live = quote === 'coinbase' || quote === 'finnhub';
+  const real = quote !== 'sim';
+  const label = !real ? 'Simulated data' : `${live ? 'Real-time' : 'Delayed'} · ${SOURCE_LABEL[quote]}`;
+  const tone = live ? 'text-t-up bg-t-up/10' : real ? 'text-t-accent bg-t-accent/10' : 'text-t-faint bg-t-hover';
+  const title = [
+    real ? `Price from ${SOURCE_LABEL[quote]}${live ? ' (streaming)' : ' (polled about once a minute)'}` : 'No real data source for this symbol. Add API keys under Data sources.',
+    history === 'sim' && real ? 'Candle history is simulated. ' + (note ?? '') : history !== 'sim' ? `History from ${SOURCE_LABEL[history]}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return (
+    <span title={title} className={`pointer-events-auto inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${live ? 'animate-pulse bg-t-up' : real ? 'bg-t-accent' : 'bg-t-faint'}`} />
+      {label}
+      {real && history === 'sim' && <span className="text-t-faint">· sim history</span>}
+    </span>
+  );
+}
