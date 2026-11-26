@@ -47,7 +47,7 @@ import type { IndicatorConfig, IndicatorType } from './indicators';
 import { TIMEFRAMES, feed, formatPrice, symbolInfo } from './market';
 import { AlertsPanel, SymbolDetails, TradePanel, Watchlist } from './components/Panels';
 import { IndicatorPicker, IndicatorSettings, SymbolSearch } from './components/Modals';
-import { IconButton } from './components/ui';
+import { IconButton, Modal } from './components/ui';
 import { load, save } from './storage';
 import type { ThemeMode } from './theme';
 import { executeOrder, newAccount, uid, unrealized } from './trading';
@@ -154,6 +154,8 @@ export default function Terminal() {
   const [typeMenu, setTypeMenu] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [range, setRange] = useState<string | null>(null);
+  const [confirmBox, setConfirmBox] = useState<{ title: string; body: string; action: string; run: () => void } | null>(null);
+  const [shot, setShot] = useState<string | null>(null);
   const chartRef = useRef<ChartHandle>(null);
 
   // persistence
@@ -297,13 +299,9 @@ export default function Terminal() {
 
   const snapshot = () => {
     const url = chartRef.current?.snapshot();
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${symbol}-${TIMEFRAMES.find((x) => x.id === tf)?.label}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.png`;
-    a.click();
-    pushToast({ title: 'Snapshot saved', body: 'Chart image downloaded as PNG.', tone: 'accent' });
+    if (url) setShot(url);
   };
+  const shotName = `${symbol}-${TIMEFRAMES.find((x) => x.id === tf)?.label}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.png`;
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen?.();
@@ -464,7 +462,13 @@ export default function Terminal() {
           <IconButton
             title="Remove all drawings"
             onClick={() => {
-              if (symbolDrawings.length && window.confirm(`Remove all ${symbolDrawings.length} drawings on ${symbol}?`)) onDrawingsChange([]);
+              if (symbolDrawings.length)
+                setConfirmBox({
+                  title: 'Remove all drawings',
+                  body: `Remove all ${symbolDrawings.length} drawings on ${symbol}? This can’t be undone.`,
+                  action: 'Remove drawings',
+                  run: () => onDrawingsChange([]),
+                });
             }}
           >
             <Trash2 size={17} />
@@ -599,7 +603,12 @@ export default function Terminal() {
                 onClose={closePosition}
                 onSelect={selectSymbol}
                 onReset={() => {
-                  if (window.confirm('Reset the paper account to $100,000 and clear all positions?')) setAccount(newAccount());
+                  setConfirmBox({
+                    title: 'Reset paper account',
+                    body: 'Reset the account to $100,000 and clear all positions and fills?',
+                    action: 'Reset account',
+                    run: () => setAccount(newAccount()),
+                  });
                 }}
               />
             )}
@@ -639,6 +648,40 @@ export default function Terminal() {
             setEditIndicator(null);
           }}
         />
+      )}
+
+      {confirmBox && (
+        <Modal title={confirmBox.title} onClose={() => setConfirmBox(null)} width="max-w-sm">
+          <p className="px-5 py-4 text-[13px] text-t-muted">{confirmBox.body}</p>
+          <div className="flex justify-end gap-2 border-t border-t-border px-5 py-3">
+            <button onClick={() => setConfirmBox(null)} className="rounded-md px-4 py-2 text-[13px] text-t-muted hover:bg-t-hover hover:text-t-text">
+              Cancel
+            </button>
+            <button
+              autoFocus
+              onClick={() => {
+                confirmBox.run();
+                setConfirmBox(null);
+              }}
+              className="rounded-md bg-t-down px-4 py-2 text-[13px] font-semibold text-white hover:brightness-110"
+            >
+              {confirmBox.action}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {shot && (
+        <Modal title="Chart snapshot" onClose={() => setShot(null)} width="max-w-4xl">
+          <div className="t-scroll overflow-auto p-4">
+            <img src={shot} alt={`${symbol} chart snapshot`} className="w-full rounded-lg border border-t-border" />
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-t-border px-5 py-3">
+            <span className="text-[12px] text-t-faint">Right-click or long-press the image to copy or save it.</span>
+            <a href={shot} download={shotName} className="shrink-0 rounded-md bg-t-accent px-4 py-2 text-[13px] font-semibold text-black hover:brightness-110">
+              Download PNG
+            </a>
+          </div>
+        </Modal>
       )}
 
       {/* ------------------------------------------------ toasts */}
